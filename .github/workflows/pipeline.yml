@@ -1,0 +1,85 @@
+name: CI/CD Pipeline
+
+# Wyzwalacze: automatycznie przy pushu na 'main' lub recznie (workflow_dispatch z opcja rollback)
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      rollback:
+        description: 'Wykonac awaryjny Rollback do poprzedniej stabilnej wersji?'
+        required: true
+        default: 'false'
+
+jobs:
+  # --- ETAP 1: TESTY ---
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobieranie kodu (Checkout)
+        uses: actions/checkout@v3
+
+      - name: Konfiguracja srodowiska Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalacja zaleznosci
+        run: pip install -r requirements.txt pytest
+
+      - name: Uruchomienie testow
+        run: pytest tests/
+
+  # --- ETAP 2: STAGING ---
+  deploy_staging:
+    name: Deploy to Staging
+    needs: test # Uruchom tylko, jesli testy zakoncza sie sukcesem
+    runs-on: ubuntu-latest
+    environment: staging # Logiczne srodowisko w GitHub
+    steps:
+      - name: Pobieranie kodu
+        uses: actions/checkout@v3
+
+      - name: Symulacja wdrozenia na AWS (Staging)
+        run: |
+          echo "Wgrywanie nowej wersji na srodowisko Staging (np. aktualizacja ASG Green)..."
+          sleep 5
+          echo "Wdrozenie na Staging zakonczone sukcesem."
+
+      - name: Powiadomienie Slack - Sukces Staging
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MESSAGE: 'Nowa wersja jest gotowa do testow na srodowisku Staging!'
+          SLACK_TITLE: 'Staging Deployment'
+          SLACK_COLOR: 'good'
+
+  # --- ETAP 3: PRODUCTION ---
+  deploy_production:
+    name: Deploy to Production
+    needs: deploy_staging # Uruchom tylko po poprawnym wgraniu na Staging
+    runs-on: ubuntu-latest
+    environment: 
+      name: production
+      # W ustawieniach repozytorium GitHub dla srodowiska 'production' 
+      # nalezy wlaczyc opcje "Required reviewers", aby wymusic Manual Approval!
+    
+    steps:
+      - name: Sprawdzanie opcji Rollback
+        if: github.event.inputs.rollback == 'true'
+        run: echo "!!! ROZPOCZYNAM PROCEDURE AWARYJNEGO ROLLBACKU NA PRODUKCJI !!!"
+
+      - name: Symulacja wdrozenia na AWS (Production)
+        run: |
+          echo "Wgrywanie zatwierdzonej wersji na srodowisko Produkcyjne..."
+          sleep 10
+          echo "Wdrozenie na Produkcje zakonczone sukcesem!"
+
+      - name: Powiadomienie Slack - Sukces Production
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MESSAGE: 'Nowy kod trafil na Produkcje. Wdrozenie zakonczone.'
+          SLACK_TITLE: 'Production Deployment'
+          SLACK_COLOR: '#36a64f'
